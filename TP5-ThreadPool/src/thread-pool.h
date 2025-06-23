@@ -19,6 +19,15 @@
 #include <condition_variable>
 #include "Semaphore.h"
 
+struct Worker {
+    std::thread thread;
+    std::function<void(void)> task;
+    Semaphore workerSem{0};
+    bool available = true;
+    bool taskReady = false;
+};
+
+
 class ThreadPool {
 public:
     ThreadPool(size_t numThreads);
@@ -27,32 +36,24 @@ public:
     ~ThreadPool();
 
 private:
-    struct Worker {
-        std::thread thread;               // Hilo que ejecuta las tareas
-        std::function<void(void)> task;  // Tarea asignada actualmente
-        Semaphore workerSem{0};           // Semáforo para señalizar tareas pendientes
-        bool available = true;            // Indica si el worker está libre
-        bool taskReady = false;           // Marca si hay tarea asignada para ejecutar
-    };
 
     void dispatcher();          
     void worker(size_t id);     
 
-    std::vector<Worker> workers;  
-    std::queue<std::function<void(void)>> taskQueue;  
-    std::mutex taskQueueMutex;                        // Mutex para proteger acceso a taskQueue
+    std::vector<Worker> threadWorkers;  // Lista de workers del pool
+    std::queue<std::function<void(void)>> pendingTasks;  // Cola de tareas pendientes
+    std::mutex pendingTasksMutex;  // Protege acceso a pendingTasks
 
-    std::mutex workerMutex;     // Mutex para proteger acceso a datos compartidos de workers (task, available, taskReady)
+    std::mutex workerStateMutex;  // Protege acceso a estado de los workers (task, available, taskReady)
 
-    bool shuttingDown = false;  
-    size_t activeTasks = 0;    
-    std::mutex activeTasksMutex; // Mutex para proteger activeTasks
-    std::condition_variable allDoneCv; // Condición para notificar cuando activeTasks llega a 0
+    bool isShuttingDown = false;  // Indica si el pool está cerrándose
+    size_t tasksInProgress = 0;   // Cantidad de tareas activas (en ejecución o por ejecutar)
+    std::mutex progressMutex;     // Protege tasksInProgress
+    std::condition_variable allTasksDoneCV;  // Notifica cuando tasksInProgress llega a 0
 
-    std::thread dispatcherThread;   // Hilo dispatcher que gestiona asignación de tareas
-    Semaphore tasksInQueue{0};       // Semáforo que cuenta tareas pendientes para despachar
-    Semaphore workersAvailable{0};   // Semáforo que cuenta workers disponibles para ejecutar
-
+    std::thread taskAssignerThread;   // Hilo que reparte tareas a los workers
+    Semaphore queuedTasks{0};         // Cuenta tareas en cola esperando ser asignadas
+    Semaphore freeWorkers{0};         // Cuenta workers disponibles
     // Prohibir copiado para evitar problemas con threads y semáforos
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
